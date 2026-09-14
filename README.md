@@ -39,12 +39,10 @@ The Filament layer should bind its provider dropdown to `AiConsoleService::provi
 
 The workflow validates Composer and PHP, runs the Laravel migration/test path, builds a release artifact, and deploys only when `composer.json`, `artisan`, and `.env.example` are present. These bootstrap files are included now; the readiness gate remains as protection against publishing an incomplete checkout.
 
-Configure these GitHub Environment values for `production`:
+Configure `APP_URL` as a GitHub Environment variable if the staging or production environment has a URL. Production artifact publishing does not require SSH secrets; configure approval rules on the `production` Environment if manual review is required before publishing.
 
-- Secrets: `SSH_PRIVATE_KEY`, `SSH_HOST`, `SSH_USER`
-- Variable: `DEPLOY_PATH` (for example `/var/www/laravelai`)
-- Variable: `APP_URL`
-
-For `staging`, optionally configure `DEPLOY_PATH` and create `$DEPLOY_PATH/shared/.env` on the self-hosted runner. If `DEPLOY_PATH` is omitted, the workflow uses `<runner-workspace>\staging`; if the shared `.env` is omitted, it creates one from `.env.example` and generates an application key. Configure a persistent environment file for real staging settings. For `production`, configure these under repository Settings > Environments > production, not only as local shell variables. The SSH private key should be the complete private key, including its `BEGIN` and `END` lines; the corresponding public key must be authorized for `SSH_USER` on `SSH_HOST`.
+For `staging`, optionally configure `DEPLOY_PATH` and create `$DEPLOY_PATH/shared/.env` on the self-hosted runner. If `DEPLOY_PATH` is omitted, the workflow uses `<runner-workspace>\staging`; if the shared `.env` is omitted, it creates one from `.env.example` and generates an application key. Configure a persistent environment file for real staging settings.
 
 The staging deployment runs locally on the self-hosted GitHub Actions runner and does not require SSH. The Windows runner must provide Windows PowerShell, PHP, Composer, and `tar`, with a shared environment file at `$DEPLOY_PATH/shared/.env`. Releases are stored at `$DEPLOY_PATH/releases/<commit-sha>` and the live release is selected through `$DEPLOY_PATH/current` as a directory junction on Windows. Keep previous release directories available until the rollback retention window has passed.
+
+The manual production action publishes the tested archive as a `production-<commit-sha>` GitHub Actions artifact for download or promotion by a separate production system. It does not require production SSH credentials.
