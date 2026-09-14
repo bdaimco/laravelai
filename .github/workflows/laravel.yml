@@ -28,7 +28,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PHP_VERSION: '8.2'
+  PHP_VERSION: '8.4'
 
 jobs:
   test:
@@ -128,7 +128,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ env.PHP_VERSION }}
-          extensions: intl, zip
+          extensions: mbstring, dom, fileinfo, intl, sqlite, pdo_sqlite, zip
           tools: composer:v2
 
       - name: Install production dependencies
