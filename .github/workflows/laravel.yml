@@ -36,9 +36,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       has_composer: ${{ steps.detect.outputs.has_composer }}
+      has_laravel_app: ${{ steps.detect.outputs.has_laravel_app }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Detect Laravel application
         id: detect
@@ -48,6 +49,11 @@ jobs:
             echo "has_composer=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_composer=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [[ -f composer.json && -f artisan && -f .env.example ]]; then
+            echo "has_laravel_app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_laravel_app=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Lint committed PHP
@@ -66,12 +72,12 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ env.PHP_VERSION }}
-          extensions: mbstring, dom, fileinfo, sqlite, pdo_sqlite
+          extensions: mbstring, dom, fileinfo, intl, sqlite, pdo_sqlite, zip
           coverage: none
           tools: composer:v2
 
       - name: Cache Composer dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         if: steps.detect.outputs.has_composer == 'true'
         with:
           path: vendor
@@ -87,7 +93,7 @@ jobs:
         run: composer install --no-interaction --no-progress --prefer-dist --optimize-autoloader
 
       - name: Prepare application
-        if: steps.detect.outputs.has_composer == 'true'
+        if: steps.detect.outputs.has_laravel_app == 'true'
         run: |
           cp .env.example .env
           php artisan key:generate
@@ -96,14 +102,14 @@ jobs:
           chmod -R 775 storage bootstrap/cache
 
       - name: Run migrations
-        if: steps.detect.outputs.has_composer == 'true'
+        if: steps.detect.outputs.has_laravel_app == 'true'
         env:
           DB_CONNECTION: sqlite
           DB_DATABASE: database/database.sqlite
         run: php artisan migrate --force
 
       - name: Run tests
-        if: steps.detect.outputs.has_composer == 'true'
+        if: steps.detect.outputs.has_laravel_app == 'true'
         env:
           DB_CONNECTION: sqlite
           DB_DATABASE: database/database.sqlite
@@ -112,19 +118,21 @@ jobs:
   build:
     name: Build release artifact
     needs: test
-    if: ${{ needs.test.result == 'success' && needs.test.outputs.has_composer == 'true' }}
+    if: ${{ needs.test.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ env.PHP_VERSION }}
+          extensions: intl, zip
           tools: composer:v2
 
       - name: Install production dependencies
+        if: needs.test.outputs.has_composer == 'true'
         run: composer install --no-dev --no-interaction --no-progress --prefer-dist --optimize-autoloader
 
       - name: Create release archive
@@ -133,7 +141,7 @@ jobs:
           tar --exclude=.git --exclude=release --exclude=.env -czf release/laravel-${GITHUB_SHA}.tar.gz .
 
       - name: Upload release artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: laravel-${{ github.sha }}
           path: release/laravel-${{ github.sha }}.tar.gz
@@ -141,15 +149,15 @@ jobs:
 
   deploy-staging:
     name: Deploy to staging
-    needs: build
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: [test, build]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.outputs.has_laravel_app == 'true' }}
     runs-on: ubuntu-latest
     environment:
       name: staging
       url: ${{ vars.APP_URL }}
     steps:
       - name: Download release artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: laravel-${{ github.sha }}
 
@@ -182,15 +190,15 @@ jobs:
 
   deploy-production:
     name: Deploy to production
-    needs: build
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'deploy-production' }}
+    needs: [test, build]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'deploy-production' && needs.test.outputs.has_laravel_app == 'true' }}
     runs-on: ubuntu-latest
     environment:
       name: production
       url: ${{ vars.APP_URL }}
     steps:
       - name: Download release artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: laravel-${{ github.sha }}
 
