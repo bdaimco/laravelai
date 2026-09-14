@@ -21,7 +21,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: laravel-${{ github.ref }}
@@ -243,6 +243,24 @@ jobs:
           name: production-${{ github.sha }}
           path: laravel-${{ github.sha }}.tar.gz
           retention-days: 30
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_tag="production-${GITHUB_SHA}"
+          asset="laravel-${GITHUB_SHA}.tar.gz"
+          if gh release view "$release_tag" >/dev/null 2>&1; then
+            gh release upload "$release_tag" "$asset" --clobber
+          else
+            gh release create "$release_tag" "$asset" \
+              --target "$GITHUB_SHA" \
+              --title "Production release ${GITHUB_SHA}" \
+              --notes "Production release generated from commit ${GITHUB_SHA}."
+          fi
 
   rollback-production:
     name: Roll back production
