@@ -211,8 +211,9 @@ jobs:
 
           if (Test-Path $currentPath) {
             $currentItem = Get-Item $currentPath -Force
-            if ($currentItem.LinkType -eq 'Junction') {
-              Remove-Item -Force $currentPath
+            $isReparsePoint = ($currentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+            if ($isReparsePoint) {
+              [IO.Directory]::Delete($currentPath, $false)
             } else {
               Remove-Item -Recurse -Force $currentPath
             }
