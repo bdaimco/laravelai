@@ -45,4 +45,6 @@ Configure these GitHub Environment values for both `staging` and `production`:
 - Variable: `DEPLOY_PATH` (for example `/var/www/laravelai`)
 - Variable: `APP_URL`
 
+These must be configured under repository Settings > Environments > the matching environment, not only as local shell variables. The SSH private key should be the complete private key, including its `BEGIN` and `END` lines; the corresponding public key must be authorized for `SSH_USER` on `SSH_HOST`.
+
 The remote host must provide PHP, Artisan-compatible extensions, and a shared environment file at `$DEPLOY_PATH/shared/.env`. Releases are stored at `$DEPLOY_PATH/releases/<commit-sha>` and the live release is selected through `$DEPLOY_PATH/current`. Keep previous release directories available until the rollback retention window has passed.
