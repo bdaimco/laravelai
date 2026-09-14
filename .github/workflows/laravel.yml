@@ -34,9 +34,33 @@ jobs:
   test:
     name: Test Laravel application
     runs-on: ubuntu-latest
+    outputs:
+      has_composer: ${{ steps.detect.outputs.has_composer }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Detect Laravel application
+        id: detect
+        shell: bash
+        run: |
+          if [[ -f composer.json ]]; then
+            echo "has_composer=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_composer=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Lint committed PHP
+        shell: bash
+        run: |
+          mapfile -d '' php_files < <(find app config database -type f -name '*.php' -print0 2>/dev/null || true)
+          if (( ${#php_files[@]} == 0 )); then
+            echo 'No PHP files found; skipping PHP lint.'
+            exit 0
+          fi
+          for file in "${php_files[@]}"; do
+            php -l "$file"
+          done
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -48,18 +72,22 @@ jobs:
 
       - name: Cache Composer dependencies
         uses: actions/cache@v4
+        if: steps.detect.outputs.has_composer == 'true'
         with:
           path: vendor
           key: composer-${{ runner.os }}-${{ hashFiles('**/composer.lock') }}
           restore-keys: composer-${{ runner.os }}-
 
       - name: Validate Composer files
+        if: steps.detect.outputs.has_composer == 'true'
         run: composer validate --strict
 
       - name: Install dependencies
+        if: steps.detect.outputs.has_composer == 'true'
         run: composer install --no-interaction --no-progress --prefer-dist --optimize-autoloader
 
       - name: Prepare application
+        if: steps.detect.outputs.has_composer == 'true'
         run: |
           cp .env.example .env
           php artisan key:generate
@@ -68,12 +96,14 @@ jobs:
           chmod -R 775 storage bootstrap/cache
 
       - name: Run migrations
+        if: steps.detect.outputs.has_composer == 'true'
         env:
           DB_CONNECTION: sqlite
           DB_DATABASE: database/database.sqlite
         run: php artisan migrate --force
 
       - name: Run tests
+        if: steps.detect.outputs.has_composer == 'true'
         env:
           DB_CONNECTION: sqlite
           DB_DATABASE: database/database.sqlite
@@ -82,7 +112,7 @@ jobs:
   build:
     name: Build release artifact
     needs: test
-    if: ${{ needs.test.result == 'success' }}
+    if: ${{ needs.test.result == 'success' && needs.test.outputs.has_composer == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

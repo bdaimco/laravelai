@@ -37,6 +37,8 @@ The Filament layer should bind its provider dropdown to `AiConsoleService::provi
 
 `.github/workflows/laravel.yml` runs tests and builds a release artifact for pull requests. A push to `main` deploys that artifact to the `staging` environment. Production deployment is started manually from the workflow dispatch menu and should use required reviewers on the `production` environment. The same menu can roll back to a retained release by commit SHA.
 
+The workflow detects whether `composer.json` exists. Until the Laravel application bootstrap is added, it runs PHP syntax checks and skips Composer, build, and deployment steps instead of reporting a misleading `composer validate` failure. Once `composer.json`, `artisan`, and `.env.example` are committed, Composer validation and the full Laravel pipeline activate automatically.
+
 Configure these GitHub Environment values for both `staging` and `production`:
 
 - Secrets: `SSH_PRIVATE_KEY`, `SSH_HOST`, `SSH_USER`
