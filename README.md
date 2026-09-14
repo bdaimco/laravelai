@@ -32,3 +32,15 @@ The Filament layer should bind its provider dropdown to `AiConsoleService::provi
 - Export/import should serialize `CmsRegistry` rows, including `structure`, `version`, and `ai_provider`.
 - CI should promote staging to production with a rollback point before migrations or registry imports.
 - Planned extensions are syntax-highlighted previews, registry export/import, multi-tenant provider settings, a plugin marketplace, and automated rollback.
+
+## GitHub CI/CD
+
+`.github/workflows/laravel.yml` runs tests and builds a release artifact for pull requests. A push to `main` deploys that artifact to the `staging` environment. Production deployment is started manually from the workflow dispatch menu and should use required reviewers on the `production` environment. The same menu can roll back to a retained release by commit SHA.
+
+Configure these GitHub Environment values for both `staging` and `production`:
+
+- Secrets: `SSH_PRIVATE_KEY`, `SSH_HOST`, `SSH_USER`
+- Variable: `DEPLOY_PATH` (for example `/var/www/laravelai`)
+- Variable: `APP_URL`
+
+The remote host must provide PHP, Artisan-compatible extensions, and a shared environment file at `$DEPLOY_PATH/shared/.env`. Releases are stored at `$DEPLOY_PATH/releases/<commit-sha>` and the live release is selected through `$DEPLOY_PATH/current`. Keep previous release directories available until the rollback retention window has passed.

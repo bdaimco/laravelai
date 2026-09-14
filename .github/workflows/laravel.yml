@@ -1,35 +1,220 @@
-name: Laravel
+name: Laravel CI/CD
 
 on:
-  push:
-    branches: [ "main" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Deployment action
+        required: true
+        type: choice
+        options:
+          - deploy-production
+          - rollback-production
+        default: deploy-production
+      rollback_sha:
+        description: Commit SHA to restore when rolling back
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: laravel-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PHP_VERSION: '8.2'
 
 jobs:
-  laravel-tests:
-
+  test:
+    name: Test Laravel application
     runs-on: ubuntu-latest
-
     steps:
-    - uses: shivammathur/setup-php@15c43e89cdef867065b0213be354c2841860869e
-      with:
-        php-version: '8.0'
-    - uses: actions/checkout@v4
-    - name: Copy .env
-      run: php -r "file_exists('.env') || copy('.env.example', '.env');"
-    - name: Install Dependencies
-      run: composer install -q --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist
-    - name: Generate key
-      run: php artisan key:generate
-    - name: Directory Permissions
-      run: chmod -R 777 storage bootstrap/cache
-    - name: Create Database
-      run: |
-        mkdir -p database
-        touch database/database.sqlite
-    - name: Execute tests (Unit and Feature tests) via PHPUnit/Pest
-      env:
-        DB_CONNECTION: sqlite
-        DB_DATABASE: database/database.sqlite
-      run: php artisan test
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: mbstring, dom, fileinfo, sqlite, pdo_sqlite
+          coverage: none
+          tools: composer:v2
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: composer-${{ runner.os }}-${{ hashFiles('**/composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - name: Validate Composer files
+        run: composer validate --strict
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist --optimize-autoloader
+
+      - name: Prepare application
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+          mkdir -p database
+          touch database/database.sqlite
+          chmod -R 775 storage bootstrap/cache
+
+      - name: Run migrations
+        env:
+          DB_CONNECTION: sqlite
+          DB_DATABASE: database/database.sqlite
+        run: php artisan migrate --force
+
+      - name: Run tests
+        env:
+          DB_CONNECTION: sqlite
+          DB_DATABASE: database/database.sqlite
+        run: php artisan test
+
+  build:
+    name: Build release artifact
+    needs: test
+    if: ${{ needs.test.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          tools: composer:v2
+
+      - name: Install production dependencies
+        run: composer install --no-dev --no-interaction --no-progress --prefer-dist --optimize-autoloader
+
+      - name: Create release archive
+        run: |
+          mkdir -p release
+          tar --exclude=.git --exclude=release --exclude=.env -czf release/laravel-${GITHUB_SHA}.tar.gz .
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: laravel-${{ github.sha }}
+          path: release/laravel-${{ github.sha }}.tar.gz
+          retention-days: 14
+
+  deploy-staging:
+    name: Deploy to staging
+    needs: build
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ vars.APP_URL }}
+    steps:
+      - name: Download release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: laravel-${{ github.sha }}
+
+      - name: Deploy release over SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+        run: |
+          install -m 600 /dev/null deploy_key
+          printf '%s\n' "$SSH_PRIVATE_KEY" > deploy_key
+          install -m 700 -d ~/.ssh
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          scp -i deploy_key laravel-${GITHUB_SHA}.tar.gz "$SSH_USER@$SSH_HOST:/tmp/laravel-${GITHUB_SHA}.tar.gz"
+          ssh -i deploy_key "$SSH_USER@$SSH_HOST" "DEPLOY_PATH='$DEPLOY_PATH' RELEASE_SHA='${GITHUB_SHA}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          release="$DEPLOY_PATH/releases/$RELEASE_SHA"
+          mkdir -p "$release"
+          tar -xzf "/tmp/laravel-$RELEASE_SHA.tar.gz" -C "$release"
+          ln -sfn "$DEPLOY_PATH/shared/.env" "$release/.env"
+          cd "$release"
+          php artisan migrate --force
+          php artisan optimize
+          ln -sfn "$release" "$DEPLOY_PATH/current"
+          rm -f "/tmp/laravel-$RELEASE_SHA.tar.gz"
+          find "$DEPLOY_PATH/releases" -mindepth 1 -maxdepth 1 -type d -not -name "$RELEASE_SHA" -mtime +14 -exec rm -rf {} +
+          REMOTE
+          rm -f deploy_key
+
+  deploy-production:
+    name: Deploy to production
+    needs: build
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'deploy-production' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.APP_URL }}
+    steps:
+      - name: Download release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: laravel-${{ github.sha }}
+
+      - name: Deploy production release over SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+        run: |
+          install -m 600 /dev/null deploy_key
+          printf '%s\n' "$SSH_PRIVATE_KEY" > deploy_key
+          install -m 700 -d ~/.ssh
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          scp -i deploy_key laravel-${GITHUB_SHA}.tar.gz "$SSH_USER@$SSH_HOST:/tmp/laravel-${GITHUB_SHA}.tar.gz"
+          ssh -i deploy_key "$SSH_USER@$SSH_HOST" "DEPLOY_PATH='$DEPLOY_PATH' RELEASE_SHA='${GITHUB_SHA}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          release="$DEPLOY_PATH/releases/$RELEASE_SHA"
+          mkdir -p "$release"
+          tar -xzf "/tmp/laravel-$RELEASE_SHA.tar.gz" -C "$release"
+          ln -sfn "$DEPLOY_PATH/shared/.env" "$release/.env"
+          cd "$release"
+          php artisan migrate --force
+          php artisan optimize
+          ln -sfn "$release" "$DEPLOY_PATH/current"
+          rm -f "/tmp/laravel-$RELEASE_SHA.tar.gz"
+          REMOTE
+          rm -f deploy_key
+
+  rollback-production:
+    name: Roll back production
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'rollback-production' && inputs.rollback_sha != '' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - name: Restore previous release
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          ROLLBACK_SHA: ${{ inputs.rollback_sha }}
+        run: |
+          install -m 600 /dev/null deploy_key
+          printf '%s\n' "$SSH_PRIVATE_KEY" > deploy_key
+          install -m 700 -d ~/.ssh
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          ssh -i deploy_key "$SSH_USER@$SSH_HOST" "DEPLOY_PATH='$DEPLOY_PATH' ROLLBACK_SHA='$ROLLBACK_SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          test -d "$DEPLOY_PATH/releases/$ROLLBACK_SHA"
+          ln -sfn "$DEPLOY_PATH/releases/$ROLLBACK_SHA" "$DEPLOY_PATH/current"
+          cd "$DEPLOY_PATH/current"
+          php artisan optimize:clear
+          php artisan optimize
+          REMOTE
+          rm -f deploy_key
