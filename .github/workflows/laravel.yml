@@ -148,10 +148,10 @@ jobs:
           retention-days: 14
 
   deploy-staging:
-    name: Deploy to staging from GitHub runner
+    name: Deploy to staging from self-hosted runner
     needs: [test, build]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.outputs.has_laravel_app == 'true' }}
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     environment:
       name: staging
       url: ${{ vars.APP_URL }}
