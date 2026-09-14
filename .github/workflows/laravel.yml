@@ -148,10 +148,10 @@ jobs:
           retention-days: 14
 
   deploy-staging:
-    name: Deploy to staging
+    name: Deploy to staging from GitHub runner
     needs: [test, build]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.outputs.has_laravel_app == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: staging
       url: ${{ vars.APP_URL }}
@@ -161,7 +161,7 @@ jobs:
         with:
           name: laravel-${{ github.sha }}
 
-      - name: Deploy release over SSH
+      - name: Deploy release from GitHub-hosted runner over SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
