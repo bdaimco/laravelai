@@ -45,4 +45,4 @@ For `staging`, optionally configure `DEPLOY_PATH` and create `$DEPLOY_PATH/share
 
 The staging deployment runs locally on the self-hosted GitHub Actions runner and does not require SSH. The Windows runner must provide Windows PowerShell, PHP, Composer, and `tar`, with a shared environment file at `$DEPLOY_PATH/shared/.env`. Releases are stored at `$DEPLOY_PATH/releases/<commit-sha>` and the live release is selected through `$DEPLOY_PATH/current` as a directory junction on Windows. Keep previous release directories available until the rollback retention window has passed.
 
-The manual production action publishes the tested archive as a `production-<commit-sha>` GitHub Actions artifact for download or promotion by a separate production system. It does not require production SSH credentials.
+The production job publishes the tested archive as a `production-<commit-sha>` GitHub Actions artifact on pushes to `main` and on manual `deploy-production` dispatches. It does not require production SSH credentials; configure approval rules on the `production` Environment if publishing needs review.

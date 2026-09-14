@@ -226,7 +226,7 @@ jobs:
   deploy-production:
     name: Publish production release to GitHub
     needs: [test, build]
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'deploy-production' && needs.test.outputs.has_laravel_app == 'true' }}
+    if: ${{ needs.test.outputs.has_laravel_app == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.action == 'deploy-production')) }}
     runs-on: ubuntu-latest
     environment:
       name: production
