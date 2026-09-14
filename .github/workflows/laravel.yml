@@ -164,7 +164,7 @@ jobs:
       - name: Deploy release locally on self-hosted runner
         env:
           DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           if ([string]::IsNullOrWhiteSpace($env:DEPLOY_PATH)) {
