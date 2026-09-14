@@ -168,7 +168,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ([string]::IsNullOrWhiteSpace($env:DEPLOY_PATH)) {
-            throw 'Missing staging variable: DEPLOY_PATH'
+            $env:DEPLOY_PATH = Join-Path $env:GITHUB_WORKSPACE 'staging'
+            Write-Warning "DEPLOY_PATH is not configured; using $env:DEPLOY_PATH"
           }
 
           $deployPath = [IO.Path]::GetFullPath($env:DEPLOY_PATH)
@@ -180,18 +181,28 @@ jobs:
 
           New-Item -ItemType Directory -Force -Path (Join-Path $deployPath 'releases') | Out-Null
           New-Item -ItemType Directory -Force -Path (Join-Path $deployPath 'shared') | Out-Null
-          if (-not (Test-Path $sharedEnv)) {
-            throw "Missing shared environment file: $sharedEnv"
-          }
           if (Test-Path $releasePath) {
             Remove-Item -Recurse -Force $releasePath
           }
           New-Item -ItemType Directory -Force -Path $releasePath | Out-Null
           tar -xzf $artifact -C $releasePath
+
+          if (-not (Test-Path $sharedEnv)) {
+            $exampleEnv = Join-Path $releasePath '.env.example'
+            if (-not (Test-Path $exampleEnv)) {
+              throw "Missing shared environment file and .env.example: $sharedEnv"
+            }
+            Copy-Item -Force $exampleEnv $sharedEnv
+            Write-Warning "Created staging environment from $exampleEnv; configure $sharedEnv for persistent settings"
+          }
           Copy-Item -Force $sharedEnv (Join-Path $releasePath '.env')
 
           Push-Location $releasePath
           try {
+            if (-not (Select-String -Path (Join-Path $releasePath '.env') -Pattern '^APP_KEY=.+')) {
+              php artisan key:generate --force
+              Copy-Item -Force (Join-Path $releasePath '.env') $sharedEnv
+            }
             php artisan migrate --force
             php artisan optimize
           } finally {
