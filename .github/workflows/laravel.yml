@@ -161,38 +161,55 @@ jobs:
         with:
           name: laravel-${{ github.sha }}
 
-      - name: Deploy release from GitHub-hosted runner over SSH
+      - name: Deploy release locally on self-hosted runner
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_USER: ${{ secrets.SSH_USER }}
           DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+        shell: pwsh
         run: |
-          set -euo pipefail
-          test -n "$SSH_PRIVATE_KEY" || { echo 'Missing staging secret: SSH_PRIVATE_KEY'; exit 1; }
-          test -n "$SSH_HOST" || { echo 'Missing staging secret: SSH_HOST'; exit 1; }
-          test -n "$SSH_USER" || { echo 'Missing staging secret: SSH_USER'; exit 1; }
-          test -n "$DEPLOY_PATH" || { echo 'Missing staging variable: DEPLOY_PATH'; exit 1; }
-          trap 'rm -f deploy_key' EXIT
-          install -m 600 /dev/null deploy_key
-          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > deploy_key
-          install -m 700 -d ~/.ssh
-          ssh-keyscan -T 10 -H "$SSH_HOST" >> ~/.ssh/known_hosts
-          scp -i deploy_key laravel-${GITHUB_SHA}.tar.gz "$SSH_USER@$SSH_HOST:/tmp/laravel-${GITHUB_SHA}.tar.gz"
-          ssh -i deploy_key "$SSH_USER@$SSH_HOST" "DEPLOY_PATH='$DEPLOY_PATH' RELEASE_SHA='${GITHUB_SHA}' bash -s" <<'REMOTE'
-          set -euo pipefail
-          release="$DEPLOY_PATH/releases/$RELEASE_SHA"
-          mkdir -p "$release"
-          tar -xzf "/tmp/laravel-$RELEASE_SHA.tar.gz" -C "$release"
-          ln -sfn "$DEPLOY_PATH/shared/.env" "$release/.env"
-          cd "$release"
-          php artisan migrate --force
-          php artisan optimize
-          ln -sfn "$release" "$DEPLOY_PATH/current"
-          rm -f "/tmp/laravel-$RELEASE_SHA.tar.gz"
-          find "$DEPLOY_PATH/releases" -mindepth 1 -maxdepth 1 -type d -not -name "$RELEASE_SHA" -mtime +14 -exec rm -rf {} +
-          REMOTE
-          rm -f deploy_key
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:DEPLOY_PATH)) {
+            throw 'Missing staging variable: DEPLOY_PATH'
+          }
+
+          $deployPath = [IO.Path]::GetFullPath($env:DEPLOY_PATH)
+          $releaseSha = $env:GITHUB_SHA
+          $releasePath = Join-Path $deployPath "releases/$releaseSha"
+          $currentPath = Join-Path $deployPath 'current'
+          $sharedEnv = Join-Path $deployPath 'shared/.env'
+          $artifact = Join-Path $PWD "laravel-$releaseSha.tar.gz"
+
+          New-Item -ItemType Directory -Force -Path (Join-Path $deployPath 'releases') | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $deployPath 'shared') | Out-Null
+          if (-not (Test-Path $sharedEnv)) {
+            throw "Missing shared environment file: $sharedEnv"
+          }
+          if (Test-Path $releasePath) {
+            Remove-Item -Recurse -Force $releasePath
+          }
+          New-Item -ItemType Directory -Force -Path $releasePath | Out-Null
+          tar -xzf $artifact -C $releasePath
+          Copy-Item -Force $sharedEnv (Join-Path $releasePath '.env')
+
+          Push-Location $releasePath
+          try {
+            php artisan migrate --force
+            php artisan optimize
+          } finally {
+            Pop-Location
+          }
+
+          if (Test-Path $currentPath) {
+            $currentItem = Get-Item $currentPath -Force
+            if ($currentItem.LinkType -eq 'Junction') {
+              Remove-Item -Force $currentPath
+            } else {
+              Remove-Item -Recurse -Force $currentPath
+            }
+          }
+          New-Item -ItemType Junction -Path $currentPath -Target $releasePath | Out-Null
+          Get-ChildItem (Join-Path $deployPath 'releases') -Directory |
+            Where-Object { $_.Name -ne $releaseSha -and $_.LastWriteTime -lt (Get-Date).AddDays(-14) } |
+            Remove-Item -Recurse -Force
 
   deploy-production:
     name: Deploy to production
